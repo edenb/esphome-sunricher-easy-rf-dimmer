@@ -1,0 +1,43 @@
+light:
+  - platform: monochromatic
+    id: ${dimmer_id}
+    name: ${dimmer_name}
+    output: ${dimmer_id}_output
+    default_transition_length: ${soft_dimmer_duration}
+    internal: ${dimmer_internal}
+    gamma_correct: 1.0
+    on_turn_on:
+      - script.execute:
+          id: repeat_rc_message
+          rc_id: ${rc_id}
+          rc_code: 199
+    on_turn_off:
+      - script.execute:
+          id: repeat_rc_message
+          rc_id: ${rc_id}
+          rc_code: 200
+
+output:
+  - platform: template
+    id: ${dimmer_id}_output
+    type: float
+    write_action:
+      - if:
+          condition:
+            lambda: !lambda |-
+              // Avoid sending the same RC codes more than once
+              static int previous_rc_code = 0;
+              int rc_code = 100 + int(state * 84);
+              if (rc_code != previous_rc_code) {
+                previous_rc_code = rc_code;
+                return true;
+              } else {
+                return false;
+              }
+          then:
+            - script.execute:
+                id: transmit_rc_message
+                rc_id: ${rc_id}
+                rc_code: !lambda |-
+                  int rc_code = 100 + int(state * 84);
+                  return rc_code;

@@ -1,0 +1,313 @@
+# ESPHome bridge for the Sunricher Easy RF dimmers
+# Up to 8 virtual dimmers to control multiple receivers
+#
+# Built and tested with: ESP32-C3 Super Mini + CC1101 868MHz RF module
+#
+# CC1101 module (868MHz version) Pin layout - Top view:
+#   ┌───────────────────────────┐
+#   │ 1 - VCC                   │
+#   │ 2 - GND  ┌───────┐        │
+#   │ 3 - MOSI │       │    GND │
+#   │ 4 - SCLK │       │        │
+#   │ 5 - MISO └───────┘    ANT │─────││││││││
+#   │ 6 - GDO2                  │
+#   │ 7 - GDO0              GND │
+#   │ 8 - CSN                   │
+#   └───────────────────────────┘
+#
+#   1 - VCC    - 1.8V-3.6V
+#   2 - GND    - Ground
+#   3 - MOSI   - SPI Master Out, Slave In
+#   4 - SCLK   - SPI Clock
+#   5 - MISO   - SPI Master In, Slave Out
+#   6 - GDO2   - Not connected
+#   7 - GDO0   - Module IN/OUT
+#   8 - CSN    - SPI Chip Select
+#
+# Wiring (ESP32-C3 Super Mini ↔ CC1101):
+#   3 - MOSI   ↔ GPIO10
+#   4 - SCLK   ↔ GPIO4
+#   5 - MISO   ↔ GPIO3
+#   7 - GDO0   ↔ GPIO1
+#   8 - CSN    ↔ GPIO7
+
+substitutions:
+  node_name: "sunricher-easy-rf"
+  node_friendly_name: "Sunricher Easy RF"
+
+  # Remote control settings:
+  # Name: Label shown for the dimmer in Home Assistant
+  # Disabled: Set to true to hide the remote control in Home Assistant
+  # RC ID: Unique remote control ID used to pair with RF receivers
+  dimmer_1_name: "Dimmer 1"
+  dimmer_1_disabled: false
+  dimmer_1_rc_id: [0x33, 0x33, 0xA1]
+
+  dimmer_2_name: "Dimmer 2"
+  dimmer_2_disabled: true
+  dimmer_2_rc_id: [0x33, 0x33, 0xA2]
+
+  dimmer_3_name: "Dimmer 3"
+  dimmer_3_disabled: true
+  dimmer_3_rc_id: [0x33, 0x33, 0xA3]
+
+  dimmer_4_name: "Dimmer 4"
+  dimmer_4_disabled: true
+  dimmer_4_rc_id: [0x33, 0x33, 0xA4]
+
+  dimmer_5_name: "Dimmer 5"
+  dimmer_5_disabled: true
+  dimmer_5_rc_id: [0x33, 0x33, 0xA5]
+
+  dimmer_6_name: "Dimmer 6"
+  dimmer_6_disabled: true
+  dimmer_6_rc_id: [0x33, 0x33, 0xA6]
+
+  dimmer_7_name: "Dimmer 7"
+  dimmer_7_disabled: true
+  dimmer_7_rc_id: [0x33, 0x33, 0xA7]
+
+  dimmer_8_name: "Dimmer 8"
+  dimmer_8_disabled: true
+  dimmer_8_rc_id: [0x33, 0x33, 0xA8]
+
+  # Soft dimmer duration
+  soft_dimmer_duration: "3s"
+
+  # Center frequency
+  frequency: "868.096MHz"
+
+  # Duration of 1 bit is 124 microseconds. Symbol rate is 1/124*10-6
+  symbol_rate: "8064"
+
+esphome:
+  name: ${node_name}
+  friendly_name: ${node_friendly_name}
+  min_version: 2026.4.0
+  name_add_mac_suffix: false
+
+esp32:
+  variant: ESP32C3
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret sunricher_api_key
+  actions:
+    # For debugging only: send one message with a specified ID and code
+    # Run the "test_transmit_rc_message" action from Home Assistant
+    - action: test_transmit_rc_message
+      variables:
+        rc_id: int[]
+        rc_code: int
+      then:
+        - if:
+            condition:
+              lambda: !lambda |-
+                return rc_id.size() == 3 &&
+                       rc_code >= 0 &&
+                       rc_code <= 255;
+            then:
+              - script.execute:
+                  id: transmit_rc_message
+                  rc_id: !lambda return std::vector<int>(rc_id.begin(), rc_id.end());
+                  rc_code: !lambda return rc_code;
+            else:
+              - logger.log:
+                  level: WARN
+                  format: "Invalid RC message: ID length=%u (expected: 3), code=%d (expected: 0 - 255)"
+                  args: [rc_id.size(), rc_code]
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  min_auth_mode: WPA2
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  power_save_mode: HIGH
+  ap:
+    ssid: Sunricher RF Fallback Hotspot
+    password: !secret sunricher_ap_password
+
+captive_portal:
+
+esp32_ble:
+  enable_on_boot: false
+
+# Physical hardware SPI bus settings for the ESP32-C3 Super Mini
+spi:
+  clk_pin: GPIO4
+  mosi_pin: GPIO10
+  miso_pin: GPIO3
+  interface: hardware
+
+# Official built-in ESPHome CC1101 component
+cc1101:
+  id: cc1101_chip
+  cs_pin: GPIO7
+  gdo0_pin: GPIO1
+
+  frequency: ${frequency}
+  fsk_deviation: 76kHz
+  output_power: 10
+  modulation_type: 2-FSK
+  symbol_rate: ${symbol_rate}
+  filter_bandwidth: 203kHz
+
+  packet_mode: true
+  packet_length: 5  # ID (3 bytes), code (1 byte), checksum (1 byte)
+  num_preamble: 3   # 3 maps to 6 preamble bytes
+  sync_mode: 16/16  # All sync-word bits should match
+  sync0: 0xD4
+  sync1: 0x2D
+
+  on_packet:
+    then:
+      - lambda: !lambda |-
+          // Only process packets with a very good Link Quality Indicator (LQI)
+          if (lqi == 0) {
+            uint8_t checksum = x[0] + x[1] + x[2] + x[3];
+            if (checksum == x[4]) {
+              char id_hex[7];
+              snprintf(id_hex, sizeof(id_hex), "%02X%02X%02X", x[0], x[1], x[2]);
+              id(rc_id_rx).publish_state(id_hex);
+            }
+          }
+
+script:
+  # Transmit one RC message (= preamble, ID, code, checksum)
+  - id: transmit_rc_message
+    parameters:
+      rc_id: int[]
+      rc_code: int
+    then:
+      - cc1101.send_packet:
+          data: !lambda |-
+            uint8_t id0 = uint8_t(rc_id[0]);
+            uint8_t id1 = uint8_t(rc_id[1]);
+            uint8_t id2 = uint8_t(rc_id[2]);
+            uint8_t code = uint8_t(rc_code);
+            uint8_t checksum = id0 + id1 + id2 + code;
+            return std::vector<uint8_t>{id0, id1, id2, code, checksum};
+  # Repeat turn on/off messages 5 times to ensure data transfer           
+  - id: repeat_rc_message
+    parameters:
+      rc_id: int[]
+      rc_code: int
+    then:
+      - repeat:
+          count: 5
+          then:
+            - script.execute:
+                id: transmit_rc_message
+                rc_id: !lambda return rc_id;
+                rc_code: !lambda return rc_code;
+
+switch:
+  - platform: restart
+    name: "Restart"
+
+sensor:
+  - platform: uptime
+    id: uptime_s
+    name: "Uptime"
+    update_interval: 60s
+  - platform: wifi_signal
+    id: wifi_rssi
+    name: "WiFi RSSI"
+    update_interval: 30s
+
+binary_sensor:
+  - platform: status
+    name: "Online"
+
+button:
+  - platform: template
+    name: "Clear RC ID (RX)"
+    icon: "mdi:delete-empty-outline"
+    on_press:
+      then:
+        - text_sensor.template.publish:
+            id: rc_id_rx
+            state: ""
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: wifi_ip
+      name: "IP Address"
+  - platform: template
+    id: rc_id_rx
+    name: "RC ID (RX)""
+    icon: "mdi:identifier"
+
+packages:
+  dimmer_1: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_1
+      dimmer_name: ${dimmer_1_name}
+      dimmer_internal: ${dimmer_1_disabled}
+      rc_id: ${dimmer_1_rc_id}
+
+  dimmer_2: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_2
+      dimmer_name: ${dimmer_2_name}
+      dimmer_internal: ${dimmer_2_disabled}
+      rc_id: ${dimmer_2_rc_id}
+
+  dimmer_3: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_3
+      dimmer_name: ${dimmer_3_name}
+      dimmer_internal: ${dimmer_3_disabled}
+      rc_id: ${dimmer_3_rc_id}
+
+  dimmer_4: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_4
+      dimmer_name: ${dimmer_4_name}
+      dimmer_internal: ${dimmer_4_disabled}
+      rc_id: ${dimmer_4_rc_id}
+
+  dimmer_5: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_5
+      dimmer_name: ${dimmer_5_name}
+      dimmer_internal: ${dimmer_5_disabled}
+      rc_id: ${dimmer_5_rc_id}
+
+  dimmer_6: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_6
+      dimmer_name: ${dimmer_6_name}
+      dimmer_internal: ${dimmer_6_disabled}
+      rc_id: ${dimmer_6_rc_id}
+
+  dimmer_7: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_7
+      dimmer_name: ${dimmer_7_name}
+      dimmer_internal: ${dimmer_7_disabled}
+      rc_id: ${dimmer_7_rc_id}
+
+  dimmer_8: !include
+    file: packages/dimmer.yaml
+    vars:
+      dimmer_id: dimmer_8
+      dimmer_name: ${dimmer_8_name}
+      dimmer_internal: ${dimmer_8_disabled}
+      rc_id: ${dimmer_8_rc_id}
