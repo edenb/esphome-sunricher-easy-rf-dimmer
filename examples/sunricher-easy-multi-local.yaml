@@ -24,12 +24,14 @@
 #   7 - GDO0   - Module IN/OUT
 #   8 - CSN    - SPI Chip Select
 #
-# Wiring (ESP32-C3 Super Mini ↔ CC1101):
-#   3 - MOSI   ↔ GPIO10
-#   4 - SCLK   ↔ GPIO4
-#   5 - MISO   ↔ GPIO3
-#   7 - GDO0   ↔ GPIO1
-#   8 - CSN    ↔ GPIO7
+# Wiring (CC1101 ↔ ESP32-C3 Super Mini):
+#   1 - VCC      ↔ 3.3V
+#   2 - GND      ↔ GND
+#   3 - MOSI     ↔ GPIO10
+#   4 - SCLK     ↔ GPIO4
+#   5 - MISO     ↔ GPIO3
+#   7 - GDO0     ↔ GPIO1
+#   8 - CSN      ↔ GPIO7
 
 substitutions:
   node_name: "sunricher-easy-rf"
