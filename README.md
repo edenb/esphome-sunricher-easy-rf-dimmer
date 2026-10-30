@@ -47,6 +47,15 @@ To set up your own configuration:
 4. In your ESPHome configuration folder, create a `packages` folder.
 5. Copy [`dimmer.yaml`](examples/packages/dimmer.yaml) into that folder.
 
+The final directory structure should look like this:
+```
+your-esphome-config/
+├── secrets.yaml
+├── packages/
+│   └── dimmer.yaml
+└── sunricher-easy-multi-local.yaml
+```
+
 ## Compatibility
 Tested on:
 - Totallux RF Easy Dimmer 50.15.0260 (= Sunricher SR-2503N)
